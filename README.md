@@ -1,98 +1,175 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Task Processor
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+A microservice that accepts tasks via REST, stores them in PostgreSQL, publishes to Kafka for processing, caches results in Redis, and exposes metrics.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+## Architecture
 
-## Description
+- API (NestJS, TypeScript):
+  - POST /tasks → insert task (pending) → publish to `tasks-input`
+  - GET /tasks/:id → cache-first (Redis) → DB fallback → cache set
+  - GET /metrics → total done tasks, average processing time
+- Worker (Kafka consumer):
+  - Consumes `tasks-input`, sets status to processing, reverses payload and appends length, updates DB (done + result), caches full result object, publishes to `tasks-output`
+- PostgreSQL: tasks table
+- Redis: cache key `task:result:{taskId}` with TTL 1h
+- Kafka: topics `tasks-input`, `tasks-output`
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
-
-## Project setup
-
-```bash
-$ npm install
+```mermaid
+flowchart LR
+  A[Client] -- POST /tasks --> B(API)
+  B -->|insert pending| DB[(PostgreSQL)]
+  B -->|publish| KI[[Kafka: tasks-input]]
+  W[Worker] -->|consume tasks-input| KI
+  W -->|set processing| DB
+  W -->|process| W
+  W -->|update done + result| DB
+  W -->|cache full result| R[(Redis)]
+  W -->|publish result| KO[[Kafka: tasks-output]]
+  A -- GET /tasks/:id --> B
+  B -->|cache-first| R
+  B -->|fallback| DB
+  A -- GET /metrics --> B
 ```
 
-## Compile and run the project
+## Stack
+
+- Node 20, NestJS 11, TypeScript 5
+- Drizzle ORM + `pg`
+- PostgreSQL 16
+- Redis 7
+- Kafka 3.7 (KRaft mode)
+- Docker Compose
+
+## Quickstart (Docker)
 
 ```bash
-# development
-$ npm run start
+# Start all services (API, worker, Postgres, Redis, Kafka, Adminer, RedisInsight, Kafka UI)
+docker compose up -d --build
 
-# watch mode
-$ npm run start:dev
+# Apply DB migrations (from schema)
+docker compose run --rm api npm run drizzle:migrate
 
-# production mode
-$ npm run start:prod
+# Tail logs
+docker compose logs -f api worker postgres redis kafka
 ```
 
-## Run tests
+Services (ports)
+
+- API: http://localhost:3000
+- Postgres: localhost:5432 (user: task, pass: task, db: taskdb)
+- Redis: localhost:6379
+- Adminer: http://localhost:8080 (System: PostgreSQL, Server: postgres)
+- RedisInsight: http://localhost:5540
+- Kafka broker: kafka:9092 (inside compose), 9092 exposed
+- Kafka UI: http://localhost:8081
+
+## Environment
+
+The compose file provides these to containers:
+
+- DATABASE_HOST=postgres, DATABASE_PORT=5432, DATABASE_USER=task, DATABASE_PASSWORD=task, DATABASE_NAME=taskdb
+- REDIS_HOST=redis, REDIS_PORT=6379
+- KAFKA_BROKERS=kafka:9092
+
+For local (outside Docker), create `.env` accordingly (host=localhost).
+
+## Database
+
+Drizzle config: `drizzle.config.ts`, schema: `src/db/schema.ts`
+
+Migrations:
 
 ```bash
-# unit tests
-$ npm run test
-
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
+docker compose run --rm api npm run drizzle:generate
+docker compose run --rm api npm run drizzle:migrate
 ```
 
-## Deployment
+## API
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+- POST /tasks
+  - Request
+    ```json
+    { "payload": "Hello world!", "priority": 1 }
+    ```
+  - Response
+    ```json
+    {
+      "id": "<uuid>",
+      "status": "pending",
+      "createdAt": "2025-01-01T00:00:00.000Z"
+    }
+    ```
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+- GET /tasks/:id
+  - Pending example
+    ```json
+    {
+      "id": "<uuid>",
+      "payload": "Hello world!",
+      "priority": 1,
+      "status": "pending",
+      "result": null
+    }
+    ```
+  - Done example (standardized object)
+    ```json
+    {
+      "taskId": "<uuid>",
+      "result": "!dlrow olleH (len=12)",
+      "processedAt": "2025-01-01T00:00:02.345Z"
+    }
+    ```
+
+- GET /metrics
+  - Response
+    ```json
+    { "totalTasks": 5, "averageProcessingTimeMs": 1200 }
+    ```
+
+## Kafka
+
+- Input topic: `tasks-input`
+  - Message
+    ```json
+    { "taskId": "<uuid>", "payload": "Hello world!", "priority": 1 }
+    ```
+- Output topic: `tasks-output`
+  - Message
+    ```json
+    {
+      "taskId": "<uuid>",
+      "result": "!dlrow olleH (len=12)",
+      "processedAt": "2025-01-01T00:00:02.345Z"
+    }
+    ```
+
+## Caching
+
+- Key: `task:result:{taskId}`
+- TTL: 3600 seconds (1 hour)
+- GET /tasks/:id returns cache when available; otherwise reads DB and then sets cache
+
+## Development
+
+Scripts:
 
 ```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+npm run start:dev          # API dev server
+npm run worker:dev         # Worker dev process
+npm run lint               # ESLint (fix on save is configured)
+npm run drizzle:generate   # Generate migrations from schema
+npm run drizzle:migrate    # Apply migrations
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+## Git workflow
 
-## Resources
+- Branches: `feat/<scope>`, `fix/<scope>`, `chore/<scope>`, `docs/<scope>`
+- Conventional Commits examples:
+  - `feat(api): implement POST /tasks and GET /tasks/:id`
+  - `feat(worker): kafka consumer processes tasks`
+  - `chore(devops): add docker compose services`
 
-Check out a few resources that may come in handy when working with NestJS:
+## Notes
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
-
-## Support
-
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+- Metrics are computed over tasks with status `done`.
+- DB `result` stores only the processed string; Redis caches full result object.

@@ -64,12 +64,18 @@ export class TasksService {
     if (!row) return null;
 
     if (row.status === 'done' && row.result) {
+      const wrapped = {
+        taskId: row.id,
+        result: row.result,
+        processedAt: row.updatedAt?.toISOString?.() ?? new Date().toISOString(),
+      };
       await this.redis.set(
         this.cacheKey(id),
-        row.result,
+        JSON.stringify(wrapped),
         'EX',
         this.cacheTtlSeconds,
       );
+      return wrapped;
     }
 
     return row;

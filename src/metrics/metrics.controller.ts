@@ -11,16 +11,16 @@ export class MetricsController {
 
   @Get()
   async getMetrics() {
-    const rows = (await this.db.execute(
+    const result = (await this.db.execute(
       sql`SELECT COUNT(*)::int AS total,
                  AVG(EXTRACT(EPOCH FROM (updated_at - created_at))) AS avg_sec
-           FROM tasks`,
-    )) as unknown as MetricsRow[];
+           FROM tasks
+           WHERE status = 'done'`,
+    )) as unknown as { rows: MetricsRow[] };
 
-    const agg: MetricsRow = rows[0] ?? { total: 0, avg_sec: null };
-    const averageProcessingTimeMs = agg.avg_sec
-      ? Math.round(agg.avg_sec * 1000)
-      : null;
+    const agg: MetricsRow = result.rows?.[0] ?? { total: 0, avg_sec: null };
+    const averageProcessingTimeMs =
+      agg.avg_sec != null ? Math.round(agg.avg_sec * 1000) : null;
     return {
       totalTasks: agg.total,
       averageProcessingTimeMs,

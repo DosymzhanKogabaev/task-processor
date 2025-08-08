@@ -20,7 +20,9 @@
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "drizzle:generate": "drizzle-kit generate --config=drizzle.config.ts",
     "drizzle:migrate": "drizzle-kit migrate --config=drizzle.config.ts",
-    "drizzle:studio": "drizzle-kit studio --config=drizzle.config.ts"
+    "drizzle:studio": "drizzle-kit studio --config=drizzle.config.ts",
+    "worker:dev": "tsx watch src/processor/main.worker.ts",
+    "worker": "node dist/processor/main.worker.js"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",

@@ -31,6 +31,33 @@ services:
       kafka:
         condition: service_healthy
 
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: dev
+    command: sh -c "npm ci && npm run worker:dev"
+    environment:
+      - NODE_ENV=development
+      - DATABASE_HOST=postgres
+      - DATABASE_PORT=5432
+      - DATABASE_USER=task
+      - DATABASE_PASSWORD=task
+      - DATABASE_NAME=taskdb
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - KAFKA_BROKERS=kafka:9092
+    volumes:
+      - .:/usr/src/app
+      - api_node_modules:/usr/src/app/node_modules
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+
   postgres:
     image: postgres:16-alpine
     environment:
@@ -72,7 +99,7 @@ services:
     image: redis/redisinsight:latest
     container_name: redisinsight
     ports:
-      - "5540:5540"
+      - '5540:5540'
     depends_on:
       redis:
         condition: service_healthy
@@ -108,7 +135,7 @@ services:
     image: provectuslabs/kafka-ui:latest
     container_name: kafka-ui
     ports:
-      - "8081:8080"
+      - '8081:8080'
     environment:
       DYNAMIC_CONFIG_ENABLED: 'true'
       KAFKA_CLUSTERS_0_NAME: local
