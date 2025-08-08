@@ -20,7 +20,7 @@ export const DRIZZLE = Symbol('DRIZZLE_DB');
           password: process.env.DATABASE_PASSWORD ?? 'task',
           database: process.env.DATABASE_NAME ?? 'taskdb',
         };
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
         const pool: Pool = new Pool(poolConfig);
         return pool;
       },
