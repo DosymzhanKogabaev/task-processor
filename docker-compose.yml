@@ -47,6 +47,14 @@ services:
       timeout: 5s
       retries: 10
 
+  adminer:
+    image: adminer:latest
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   redis:
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "yes"]
