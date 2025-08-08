@@ -14,27 +14,10 @@ A microservice that accepts tasks via REST, stores them in PostgreSQL, publishes
 - Redis: cache key `task:result:{taskId}` with TTL 1h
 - Kafka: topics `tasks-input`, `tasks-output`
 
-```mermaid
-flowchart LR
-  A[Client] -- POST /tasks --> B(API)
-  B -->|insert pending| DB[(PostgreSQL)]
-  B -->|publish| KI[[Kafka: tasks-input]]
-  W[Worker] -->|consume tasks-input| KI
-  W -->|set processing| DB
-  W -->|process| W
-  W -->|update done + result| DB
-  W -->|cache full result| R[(Redis)]
-  W -->|publish result| KO[[Kafka: tasks-output]]
-  A -- GET /tasks/:id --> B
-  B -->|cache-first| R
-  B -->|fallback| DB
-  A -- GET /metrics --> B
-```
-
 ## Stack
 
 - Node 20, NestJS 11, TypeScript 5
-- Drizzle ORM + `pg`
+- Drizzle ORM
 - PostgreSQL 16
 - Redis 7
 - Kafka 3.7 (KRaft mode)
@@ -108,7 +91,9 @@ docker compose run --rm api npm run drizzle:migrate
       "payload": "Hello world!",
       "priority": 1,
       "status": "pending",
-      "result": null
+      "result": null,
+      "createdAt": "2025-08-08T13:57:36.860Z",
+      "updatedAt": "2025-08-08T13:57:36.860Z"
     }
     ```
   - Done example (standardized object)
@@ -160,14 +145,6 @@ npm run lint               # ESLint (fix on save is configured)
 npm run drizzle:generate   # Generate migrations from schema
 npm run drizzle:migrate    # Apply migrations
 ```
-
-## Git workflow
-
-- Branches: `feat/<scope>`, `fix/<scope>`, `chore/<scope>`, `docs/<scope>`
-- Conventional Commits examples:
-  - `feat(api): implement POST /tasks and GET /tasks/:id`
-  - `feat(worker): kafka consumer processes tasks`
-  - `chore(devops): add docker compose services`
 
 ## Notes
 
